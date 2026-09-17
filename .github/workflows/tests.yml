@@ -12,5 +12,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: sudo apt-get update && sudo apt-get install -y unixodbc xvfb
-      - run: pip install -r requirements.txt
-      - run: xvfb-run -a python -m unittest test_safety test_enterprise_features test_qa_regressions test_size_estimates test_qa_ui
+      - run: pip install .
+      - run: python -c "import shutil; assert shutil.which(x27pgbridgex27)"
+      - run: xvfb-run -a python -m unittest discover -s tests -t .

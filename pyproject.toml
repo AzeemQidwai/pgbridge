@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgbridge"
+dynamic = ["version"]
+description = "Migrate PostgreSQL to SQL Server with preflight checks, resumable transfers, and verification that has to pass"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["psycopg2-binary>=2.9.9", "pyodbc>=5.1.0"]
+keywords = ["postgresql", "sql-server", "mssql", "database-migration", "etl"]
+
+[project.urls]
+Homepage = "https://github.com/AzeemQidwai/pgbridge"
+
+[project.scripts]
+pgbridge = "pgbridge.__main__:main"
+
+[tool.setuptools]
+packages = ["pgbridge"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pgbridge.__version__" }

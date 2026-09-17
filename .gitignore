@@ -11,3 +11,6 @@ pgbridge_output/
 *.zip
 # internal audit notes, not for publication
 docs/qa-audit.md
+build/
+*.egg-info/
+dist/

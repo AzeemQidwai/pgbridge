@@ -4,7 +4,7 @@
 Builds the real window against a display and drives the pickers. Needs Tk and a
 display; it is skipped on a headless box.
 
-    python test_stage_flow.py
+    python -m tests.test_stage_flow
 """
 
 import ast

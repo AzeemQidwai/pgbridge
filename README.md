@@ -80,25 +80,23 @@ Install the SQL Server driver using Microsoft's instructions for your exact
 On Windows, use Python with Tcl/Tk enabled and the
 [Microsoft ODBC driver installer](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server).
 
-From `pgbridge_app`:
+Install straight from GitHub with [pipx](https://pipx.pypa.io) and launch:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python run.py
+pipx install git+https://github.com/AzeemQidwai/pgbridge
+pgbridge
 ```
 
-Windows PowerShell:
+Or run from a clone:
 
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python run.py
+```bash
+git clone https://github.com/AzeemQidwai/pgbridge && cd pgbridge
+python3 -m venv .venv && source .venv/bin/activate   # Windows: py -m venv .venv; .venv\Scripts\Activate.ps1
+python -m pip install -e .
+pgbridge                                             # or: python run.py
 ```
 
-`run.py` checks required runtime components at startup. Source and target databases
+pgbridge checks required runtime components at startup. Source and target databases
 are selected in the workflow, after configuring the server connections. Open a
 database dropdown to search by name; matching is case-insensitive. Press Enter
 to choose a result or Escape to dismiss the search. New target database names
@@ -239,29 +237,29 @@ enabled and certificate trust bypass disabled.
 ## Development
 
 ```text
-pgbridge_app/
-├── run.py                       # Startup checks and desktop entry point
+pgbridge/
+├── pyproject.toml               # Package metadata and the `pgbridge` command
+├── run.py                       # Run from a clone without installing
 ├── pgbridge/
+│   ├── __main__.py              # Startup checks and desktop entry point
 │   ├── app.py                   # Workflows and UI orchestration
 │   ├── widgets.py               # Shared interactive controls
 │   ├── theme.py                 # Palette, typography, ttk styles
 │   ├── engine.py                # Introspection, preflight, transfer, verification
 │   ├── cutover.py               # Django configuration and connection probe
 │   └── handoff.py               # Secret-free framework templates
-├── test_enterprise_features.py
-├── test_safety.py
-└── test_stage_flow.py
+├── tests/                       # Unit, UI, and stage-flow tests
+└── docs/operator-guide.md
 ```
 
-Run from `pgbridge_app`:
+From the repository root:
 
 ```bash
-python -m unittest test_safety test_enterprise_features test_qa_regressions test_qa_ui
-python test_stage_flow.py
-python -m pgbridge.cutover
+python -m unittest discover -s tests -t .   # all unit, UI, and stage-flow tests
+python -m pgbridge.cutover                   # cutover self-check
 ```
 
-The opt-in `test_live_migration.py --run-isolated` rehearsal uses the active local
+The opt-in `python -m tests.test_live_migration --run-isolated` rehearsal uses the active local
 profile and creates temporary synthetic schemas in the database named by `PGBRIDGE_QA_DB` on both
 servers. Run it only with authorization; it removes its own schemas afterward.
 

@@ -410,7 +410,7 @@ early — in a regulated organization it is usually the slowest item in the whol
 ## Tests
 
 ```bash
-python test_stage_flow.py       # about a minute
+python -m tests.test_stage_flow   # about a minute
 ```
 
 It maps exactly one window and reuses it: mapping a Tk top-level costs a slow
