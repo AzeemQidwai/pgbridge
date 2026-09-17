@@ -248,14 +248,15 @@ pgbridge/
 │   ├── engine.py                # Introspection, preflight, transfer, verification
 │   ├── cutover.py               # Django configuration and connection probe
 │   └── handoff.py               # Secret-free framework templates
-├── tests/                       # Unit, UI, and stage-flow tests
+├── tests/                       # Unit and UI tests, plus the stage-flow script
 └── docs/operator-guide.md
 ```
 
 From the repository root:
 
 ```bash
-python -m unittest discover -s tests -t .   # all unit, UI, and stage-flow tests
+python -m unittest discover -s tests -t .   # unit and UI tests (run in CI)
+python -m tests.stage_flow                  # full-window stage flow, needs a real display
 python -m pgbridge.cutover                   # cutover self-check
 ```
 
