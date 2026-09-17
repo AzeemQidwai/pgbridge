@@ -15,7 +15,9 @@ until verification passes**.
 
 [Quick start](#quick-start) · [Workflow](#migration-workflow) · [Cutover](#application-cutover) · [Operations](#operational-boundaries) · [Development](#development)
 
-<!-- Add a 20-second GIF of Connect → Preflight → Transfer → Verify here: docs/demo.gif -->
+<img src="docs/demo.gif" alt="pgbridge walking through Connect, Tables, Preflight, Transfer, Verify, and Cutover" width="900">
+
+<sub>Demo data. Every stage of a migration: connect, choose tables, preflight, transfer, verify, cut over.</sub>
 
 </div>
 
@@ -34,6 +36,11 @@ and collation survived. pgbridge makes those risks visible up front and makes
 - **Honest verification** — missing tables or zero checked tables fail, they don't pass
 - **App cutover included** — patch Django settings, or export handoff templates for SQLAlchemy, EF Core, Spring Boot, and Node
 - **No cloud, no account** — runs on your machine, credentials never leave it
+
+<p align="center">
+  <img src="docs/preflight.png" alt="Preflight blocking a nullable unique column, with the column, both declarations, and the available fixes" width="900">
+  <br><sub>Preflight names the exact column, how each side declares it, and what you can do about it.</sub>
+</p>
 
 If pgbridge saves you a weekend, a ⭐ helps other people find it.
 
