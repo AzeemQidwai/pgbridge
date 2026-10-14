@@ -79,6 +79,37 @@ def find_databases(source: str) -> tuple[int, int] | None:
     return None
 
 
+def diagnose(path: str) -> str:
+    """One log line on what the settings file looks like to the parser: the
+    record to read when the screen says DATABASES is missing."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        return f"{path}: cannot read ({exc})."
+    bits = [f"{path}: {len(raw):,} bytes",
+            "UTF-8 BOM" if raw.startswith(b"\xef\xbb\xbf") else "no BOM",
+            "CRLF" if b"\r\n" in raw else "LF"]
+    try:
+        source = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return ", ".join(bits) + f"; not UTF-8 at byte {exc.start} — re-save it as UTF-8."
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return ", ".join(bits) + (f"; does not parse: line {exc.lineno}: {exc.msg}: "
+                                  f"{(exc.text or '').strip()}")
+    span = find_databases(source)
+    if span:
+        return ", ".join(bits) + f"; DATABASES at lines {span[0]}–{span[1]}."
+    nested = sorted({n.lineno for n in ast.walk(tree)
+                     if isinstance(n, ast.Name) and n.id == "DATABASES"})
+    where = (f"DATABASES only referenced at line(s) {', '.join(map(str, nested))} "
+             "(inside a block or modified, not assigned at top level)"
+             if nested else "DATABASES does not appear in it")
+    return ", ".join(bits) + f"; parses, but {where}."
+
+
 def already_patched(source: str) -> bool:
     return f"# {MARKER}:" in source
 
@@ -205,7 +236,7 @@ def patch_settings(path: str, ms, use_env: bool, backup: bool = True, env_path: 
         raise ValueError("A target database is required.")
     if use_env:
         validate_env_values(env_values(ms))
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8-sig") as fh:
         source = fh.read()
 
     span = find_databases(source)
@@ -265,7 +296,7 @@ def update_env_file(path: str, values: dict[str, str]) -> dict:
     values = validate_env_values(values)
     existing: list[str] = []
     if os.path.exists(path):
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8-sig") as fh:
             existing = fh.read().splitlines()
 
     seen, out, updated = set(), [], []
@@ -591,6 +622,21 @@ def demo() -> None:
     exec(compile(open(path3, encoding="utf-8").read(), path3, "exec"), scope)
     assert scope["DATABASES"]["default"]["PASSWORD"] == nasty
     assert scope["DATABASES"]["default"]["ENGINE"] == "mssql"
+
+    # Windows editors save UTF-8 with a BOM; ast.parse rejects it if kept.
+    path4 = os.path.join(folder, "bom.py")
+    with open(path4, "w", encoding="utf-8-sig") as fh:
+        fh.write(original)
+    patch_settings(path4, _Ms(), use_env=False)
+    assert '"ENGINE": "mssql"' in open(path4, encoding="utf-8").read()
+
+    with open(path4, "w", encoding="utf-8-sig") as fh:
+        fh.write("if True:\n    DATABASES = {}\n")
+    report = diagnose(path4)
+    assert "UTF-8 BOM" in report and "line(s) 2" in report, report
+    with open(path4, "w", encoding="utf-8") as fh:
+        fh.write("DATABASES = {\n")
+    assert "does not parse: line 1" in diagnose(path4), diagnose(path4)
     print("cutover self-check ok")
 
 

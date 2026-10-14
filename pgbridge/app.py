@@ -3528,11 +3528,18 @@ class CutoverStage(Stage):
             self._write_preview([("head", "Nothing selected yet.\n")])
             return
 
+        report = cutover.diagnose(path)
+        if report != getattr(self, "_last_report", None):
+            # Logged once per change, not on every refresh.
+            self._last_report = report
+            self.app.say(f"Settings check — {report}", "info")
         try:
-            with open(path, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8-sig") as fh:
                 source = fh.read()
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             self.status.configure(text=str(exc))
+            self.apply_btn.set_enabled(False)
+            self.test_btn.set_enabled(False)
             return
 
         if not self.app.ms.database:
@@ -3546,11 +3553,20 @@ class CutoverStage(Stage):
         span = cutover.find_databases(source)
         lines: list[tuple[str, str]] = []
         if span is None:
+            self.apply_btn.set_enabled(False)
+            self.test_btn.set_enabled(False)
+            try:
+                compile(source, path, "exec")
+            except SyntaxError as exc:
+                # Not "no DATABASES" — the file can't be read as Python at all.
+                self.status.configure(
+                    text=f"This file does not parse as Python (line {exc.lineno}).")
+                self._write_preview([("old", f"Line {exc.lineno}: {exc.msg}\n"
+                                             f"{(exc.text or '').rstrip()}\n")])
+                return
             self.status.configure(
                 text="No DATABASES assignment in this file — pick the module "
                      "that defines it.")
-            self.apply_btn.set_enabled(False)
-            self.test_btn.set_enabled(False)
             self._write_preview([("old", "This file has no top-level "
                                          "DATABASES setting.\n")])
             return
