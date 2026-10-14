@@ -712,6 +712,7 @@ class Preflight:
                             issues.append(Issue("stop", table.name, "Type mapping", str(exc),
                                                 "Create a reviewed target column type before migrating.",
                                                 columns=[col.name], fix={"plans": ["skip"]}))
+                    issues += self._unbounded_key(table, src)
                 continue
             issues += self._columns_align(table, tgt)
             issues += self._target_not_empty(table)
@@ -725,6 +726,44 @@ class Preflight:
         return issues
 
     # -- individual checks -------------------------------------------------
+    def _unbounded_key(self, table: Table, src) -> list[Issue]:
+        """A text/bytea primary key can't stay (max) on SQL Server; the created
+        column is capped, so the source values must fit the cap."""
+        pk = [c for c in table.columns if c.is_pk]
+        out = []
+        for c in pk:
+            try:
+                kind, limit = key_type(c, len(pk))
+            except ValueError:
+                continue                    # already reported as a type mapping stop
+            if limit is None:
+                continue
+            longest = fetch_one(
+                src, f'SELECT MAX(LENGTH("{c.name}")) FROM '
+                     f'"{self.conns.pg.schema}"."{table.name}"')[0] or 0
+            facts = {"Column": f"{table.name}.{c.name}",
+                     "Source column": describe_pg_column(c),
+                     "Created as": f"{kind} (a key cannot be {sql_type(c)})",
+                     "Longest source value": f"{longest:,}",
+                     "Cap": f"{limit:,}"}
+            if longest > limit:
+                out.append(Issue(
+                    "stop", table.name, "Primary key too long",
+                    f"{c.name} is an unbounded {c.pg_type} primary key; SQL Server "
+                    f"needs it bounded at {limit:,}, but the source holds values "
+                    f"up to {longest:,}.",
+                    "Create the target table by hand with a different key (e.g. a "
+                    "surrogate id), or shorten the source values.", facts,
+                    [c.name], {"plans": ["skip"]}))
+            else:
+                out.append(Issue(
+                    "note", table.name, "Primary key bounded",
+                    f"{c.name} is an unbounded {c.pg_type} primary key; it is "
+                    f"created as {kind}, and every source value fits.",
+                    "Run `manage.py migrate` against the target instead if the "
+                    "model declares the real length.", facts, [c.name]))
+        return out
+
     def _database_settings(self, tgt) -> list[Issue]:
         out = []
         row = fetch_one(tgt, "SELECT is_read_committed_snapshot_on, collation_name "
@@ -1202,6 +1241,22 @@ def sql_type(c: Column) -> str:
     return base
 
 
+def key_type(c: Column, key_cols: int) -> tuple[str, int | None]:
+    """sql_type for a primary key column, and the length it was capped to.
+
+    SQL Server cannot key on (max) types and a clustered key spans at most 900
+    bytes, so an unbounded text/bytea key gets an even share of those bytes.
+    ponytail: even split, an int beside the text key still costs it a share.
+    """
+    t = sql_type(c)
+    budget = 900 // key_cols
+    if t.startswith("nvarchar(max)"):
+        return f"nvarchar({budget // 2})", budget // 2
+    if t.startswith("varbinary(max)"):
+        return f"varbinary({budget})", budget
+    return t, None
+
+
 def is_serial(c: Column) -> bool:
     """A Postgres serial/identity key, which becomes IDENTITY on the target so
     the application keeps getting keys after cutover."""
@@ -1218,11 +1273,12 @@ def generate_ddl(schema: str, table: Table) -> str:
     case. Add the rest here if a non-Django source ever needs it.
     """
     body = []
+    pk = [c.name for c in table.columns if c.is_pk]
     for c in table.columns:
         identity = " IDENTITY(1,1)" if is_serial(c) else ""
-        body.append(f"    [{c.name}] {sql_type(c)}{identity} "
+        kind = key_type(c, len(pk))[0] if c.is_pk else sql_type(c)
+        body.append(f"    [{c.name}] {kind}{identity} "
                     f"{'NULL' if c.nullable else 'NOT NULL'}")
-    pk = [c.name for c in table.columns if c.is_pk]
     if pk:
         cols = ", ".join(f"[{p}]" for p in pk)
         body.append(f"    CONSTRAINT [PK_{table.name}] PRIMARY KEY ({cols})")

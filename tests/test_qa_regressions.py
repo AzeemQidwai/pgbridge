@@ -218,6 +218,13 @@ class EngineQA(unittest.TestCase):
     def test_unbounded_varchar_is_not_truncated_to_255(self):
         self.assertEqual(E.sql_type(E.Column('label','character varying',True,False)),'nvarchar(max)')
 
+    def test_text_primary_key_is_bounded_in_ddl(self):
+        cols=[E.Column('tag_no','text',False,True),E.Column('note','text',True,False)]
+        ddl=E.generate_ddl('dbo',E.Table('accounts_oracledata',columns=cols))
+        self.assertIn('[tag_no] nvarchar(450) NOT NULL',ddl)
+        self.assertIn('[note] nvarchar(max) NULL',ddl)
+        self.assertEqual(E.key_type(cols[0],2),('nvarchar(225)',225))
+
     def test_modern_identity_maps_to_sql_identity(self):
         col=E.Column('id','bigint',False,True,default='GENERATED IDENTITY')
         self.assertIn('IDENTITY(1,1)',E.generate_ddl('dbo',E.Table('t',columns=[col])))
