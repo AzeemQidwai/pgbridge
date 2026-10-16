@@ -339,5 +339,27 @@ class UIQA(unittest.TestCase):
         stage.reset()
         self.assertIsNone(stage.size_report)
 
+    def test_batch_select_all_and_switch_activity(self):
+        self.app.open_batch()
+        batch=self.app.batch_screen
+        batch.available_dbs=['a','b'];batch.selected_dbs=set();batch._render()
+        self.assertFalse(batch.all_var.get())
+        batch.all_var.set(True);batch._toggle_all(True)
+        self.assertEqual(batch.selected_dbs,{'a','b'})
+        self.assertEqual(batch.tree.set('a','sel'),'☑')
+        # Mid-batch, ticking would re-render and wipe every row's progress.
+        batch._pump_id='running';batch.tree.set('a','status','Running')
+        batch.all_var.set(False);batch._toggle_all(False)
+        self.assertEqual(batch.selected_dbs,{'a','b'})
+        self.assertTrue(batch.all_var.get())
+        self.assertEqual(batch.tree.set('a','status'),'Running')
+        batch._pump_id=None
+        # Switch activity from the batch screen returns to the chooser.
+        self.assertTrue(self.app.switch_btn._enabled)
+        self.app.change_activity();self.app.update_idletasks()
+        self.assertFalse(batch.winfo_manager())
+        self.assertTrue(self.app.chooser.winfo_manager())
+        self.assertFalse(self.app.switch_btn._enabled)
+
 
 if __name__=='__main__':unittest.main()

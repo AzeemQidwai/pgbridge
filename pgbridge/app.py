@@ -185,6 +185,7 @@ class App(tk.Tk):
         self.jobs_screen.pack(fill="both", expand=True,
                               padx=SP["lg"], pady=(SP["sm"], 0))
         self._repack_log()
+        self.switch_btn.set_enabled(True)
         self.jobs_screen.reload()
 
     def close_jobs(self):
@@ -192,6 +193,7 @@ class App(tk.Tk):
         target = self.body if self.activity_label.cget("text") else self.chooser
         target.pack(fill="both", expand=True, padx=SP["lg"], pady=(SP["sm"], 0))
         self._repack_log()
+        self.switch_btn.set_enabled(target is self.body)
 
     def open_batch(self):
         self.sync_job()
@@ -200,6 +202,7 @@ class App(tk.Tk):
         self.batch_screen.pack(fill="both", expand=True,
                                padx=SP["lg"], pady=(SP["sm"], 0))
         self._repack_log()
+        self.switch_btn.set_enabled(True)
         self.batch_screen.reload()
 
     def close_batch(self):
@@ -207,6 +210,7 @@ class App(tk.Tk):
         target = self.body if self.activity_label.cget("text") else self.chooser
         target.pack(fill="both", expand=True, padx=SP["lg"], pady=(SP["sm"], 0))
         self._repack_log()
+        self.switch_btn.set_enabled(target is self.body)
 
     def test_connections_front(self):
         """Choose credentials before running a workspace connection test."""
@@ -445,11 +449,13 @@ class App(tk.Tk):
     def change_activity(self):
         if self.operation_active():
             messagebox.showinfo("Transfer running",
-                                "Stop the transfer before switching activity.")
+                                "Stop the transfer or batch before switching activity.")
             return
         self.finish_job("abandoned")
         self.reset_run(keep_connection=True)
-        self.body.pack_forget()
+        # Batch and Jobs replace the body, so any of the three may be showing.
+        for frame in (self.body, self.jobs_screen, self.batch_screen):
+            frame.pack_forget()
         self.chooser.pack(fill="both", expand=True,
                           padx=SP["lg"], pady=(SP["sm"], 0))
         self.activity_label.configure(text="")
@@ -1011,10 +1017,10 @@ class BatchScreen(ttk.Frame):
 
         Button(bar, "Scan Source Databases", self.scan_databases, variant="primary",
                icon="🔍", font=app.fonts["small"], height=28).pack(side="left")
-        Button(bar, "Select All", lambda: self._toggle_all(True), variant="quiet",
-               font=app.fonts["small"], height=28).pack(side="left", padx=(SP["sm"], 0))
-        Button(bar, "Select None", lambda: self._toggle_all(False), variant="quiet",
-               font=app.fonts["small"], height=28).pack(side="left", padx=(SP["sm"], 0))
+        self.all_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="Select all", variable=self.all_var,
+                        command=lambda: self._toggle_all(self.all_var.get())).pack(
+            side="left", padx=(SP["md"], 0))
 
         self.naming_rule = Field(bar, "Target database naming", app.fonts, kind="combo",
                                  style_prefix="Root", width=22,
@@ -1116,13 +1122,27 @@ class BatchScreen(ttk.Frame):
     def _render(self):
         self.tree.delete(*self.tree.get_children())
         for d in self.available_dbs:
-            sel = "✓" if d in self.selected_dbs else " "
+            sel = "☑" if d in self.selected_dbs else "☐"
             tgt = self._target_name_for(d)
             self.tree.insert("", "end", iid=d, values=(sel, d, tgt, "Pending", "—", "—", "—", ""),
                              tags=("pending",))
+        self.all_var.set(bool(self.available_dbs)
+                         and len(self.selected_dbs) == len(self.available_dbs))
         self.summary_lbl.configure(text=f"{len(self.selected_dbs)} of {len(self.available_dbs)} databases selected for migration.")
 
+    def _running(self) -> bool:
+        """Re-rendering mid-batch would wipe every row's progress."""
+        if self._pump_id is not None:
+            self.app.say("Selection is locked while the batch runs.", "warn")
+            return True
+        return False
+
     def _toggle_all(self, on: bool | None = None):
+        if self._running():
+            # The checkbox has already flipped itself; put it back.
+            self.all_var.set(bool(self.available_dbs) and
+                             len(self.selected_dbs) == len(self.available_dbs))
+            return
         if on is None:
             on = len(self.selected_dbs) < len(self.available_dbs)
         self.selected_dbs = set(self.available_dbs) if on else set()
@@ -1130,7 +1150,7 @@ class BatchScreen(ttk.Frame):
 
     def _click_tree(self, event):
         row = self.tree.identify_row(event.y)
-        if row:
+        if row and not self._running():
             if row in self.selected_dbs:
                 self.selected_dbs.remove(row)
             else:
@@ -1139,7 +1159,7 @@ class BatchScreen(ttk.Frame):
 
     def _toggle_selected(self):
         sel = self.tree.selection()
-        if sel:
+        if sel and not self._running():
             d = sel[0]
             if d in self.selected_dbs:
                 self.selected_dbs.remove(d)
@@ -1201,7 +1221,7 @@ class BatchScreen(ttk.Frame):
                 total = len(self.migrator.items)
                 self.overall_meter.set(idx / max(total, 1))
                 if self.tree.exists(src):
-                    self.tree.item(src, values=("✓", src, tgt, "Running", "...", "...", "...", "In progress"),
+                    self.tree.item(src, values=("☑", src, tgt, "Running", "...", "...", "...", "In progress"),
                                    tags=("running",))
                 self.status_lbl.configure(text=f"Migrating {src} ({idx+1}/{total})")
             elif kind == "batch_db_done":
@@ -1212,7 +1232,7 @@ class BatchScreen(ttk.Frame):
                 tag = "done" if st == "done" else ("failed" if st == "failed" else "pending")
                 if self.tree.exists(src):
                     self.tree.item(src, values=(
-                        "✓", src, tgt, st.capitalize(),
+                        "☑", src, tgt, st.capitalize(),
                         f"{it.get('tables_done')}/{it.get('tables_total')}",
                         f"{it.get('rows_moved', 0):,}",
                         it.get("finished", "")[11:19],
