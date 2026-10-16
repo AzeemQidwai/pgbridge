@@ -361,5 +361,22 @@ class UIQA(unittest.TestCase):
         self.assertTrue(self.app.chooser.winfo_manager())
         self.assertFalse(self.app.switch_btn._enabled)
 
+    def test_batch_scan_without_connection_opens_connection_window(self):
+        batch=self.app.batch_screen
+        self.app.conns=None
+        def connect():
+            self.app.conns=Mock(probe_source=Mock(return_value={'databases':['a','template0']}))
+            self.app.versions['source']='PostgreSQL 15'
+        with patch.object(self.app,'test_connections_front',side_effect=connect) as opened, \
+             patch.object(self.app,'run_async',side_effect=lambda work,on_done,**_:on_done(work())):
+            batch.scan_databases()
+        opened.assert_called_once()
+        self.assertEqual(batch.available_dbs,['a'])
+        # Closed without connecting: no scan, no error.
+        self.app.conns=None;self.app.versions['source']='';batch.available_dbs=[]
+        with patch.object(self.app,'test_connections_front',return_value=None):
+            batch.scan_databases()
+        self.assertEqual(batch.available_dbs,[])
+
 
 if __name__=='__main__':unittest.main()

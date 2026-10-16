@@ -1096,8 +1096,16 @@ class BatchScreen(ttk.Frame):
 
     def scan_databases(self):
         if self.app.conns is None:
-            messagebox.showinfo("Not connected", "Test connections on the Connect stage first.")
-            return
+            messagebox.showinfo("Not connected",
+                                "Connect to the source and target servers first. The "
+                                "connection window opens next; the scan runs once the "
+                                "source connects.")
+            editor = self.app.test_connections_front()
+            if editor is not None:
+                editor.wait_window(editor.master)
+            # Closed without a successful test: nothing to scan.
+            if self.app.conns is None or not self.app.versions.get("source"):
+                return
 
         def work():
             return self.app.conns.probe_source()["databases"]
