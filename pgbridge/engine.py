@@ -713,6 +713,7 @@ class Preflight:
                                                 "Create a reviewed target column type before migrating.",
                                                 columns=[col.name], fix={"plans": ["skip"]}))
                     issues += self._unbounded_key(table, src)
+                    issues += self._wide_decimal(table, src)
                 continue
             issues += self._columns_align(table, tgt)
             issues += self._target_not_empty(table)
@@ -762,6 +763,52 @@ class Preflight:
                     f"created as {kind}, and every source value fits.",
                     "Run `manage.py migrate` against the target instead if the "
                     "model declares the real length.", facts, [c.name]))
+        return out
+
+    def _wide_decimal(self, table: Table, src) -> list[Issue]:
+        """numeric(p,s) with p > 38 is created as decimal(38,s), and a plain
+        numeric as decimal(38,UNCONSTRAINED_SCALE); the source values must fit
+        the integer digits that leaves, and the decimal places, or they round."""
+        out = []
+        for c in table.columns:
+            if c.pg_type not in ("numeric", "decimal") or (c.precision or 39) <= 38:
+                continue
+            try:
+                kind = sql_type(c)
+            except ValueError:
+                continue                    # already reported as a type mapping stop
+            declared = (f"{c.pg_type}({c.precision},{c.scale or 0})" if c.precision
+                        else f"unconstrained {c.pg_type}")
+            scale = (c.scale or 0) if c.precision else UNCONSTRAINED_SCALE
+            # NaN/Infinity land as NULL (see adapt), so they don't count here.
+            largest, places = fetch_one(
+                src, f'SELECT MAX(ABS("{c.name}")), MAX(SCALE("{c.name}")) FROM '
+                     f'"{self.conns.pg.schema}"."{table.name}" '
+                     f'''WHERE "{c.name}"::text NOT IN ('NaN', 'Infinity', '-Infinity')''')
+            largest, places = largest or 0, places or 0
+            limit = decimal.Decimal(10) ** (38 - scale)
+            facts = {"Column": f"{table.name}.{c.name}",
+                     "Source column": describe_pg_column(c),
+                     "Created as": kind,
+                     "Largest source value": f"{largest:,}",
+                     "Must stay below": f"{limit:,}",
+                     "Most decimal places": f"{places} (keeps {scale})"}
+            if largest >= limit or places > scale:
+                why = (f"values too large for {kind}" if largest >= limit
+                       else f"values with {places} decimal places, which {kind} would round")
+                out.append(Issue(
+                    "stop", table.name, "Decimal too wide",
+                    f"{c.name}: {declared} has no exact SQL Server decimal, and the "
+                    f"source holds {why}.",
+                    "Create the target column by hand (e.g. float or nvarchar), "
+                    "or constrain the source column.", facts, [c.name], {"plans": ["skip"]}))
+            else:
+                out.append(Issue(
+                    "note", table.name, "Decimal narrowed",
+                    f"{c.name} is {declared}; it is "
+                    f"created as {kind}, and every source value fits.",
+                    "Run `manage.py migrate` against the target instead if the "
+                    "model declares a different precision.", facts, [c.name]))
         return out
 
     def _database_settings(self, tgt) -> list[Issue]:
@@ -1219,6 +1266,9 @@ def read_checkpoint(output_dir: str, pair: list[str]) -> dict | None:
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
+UNCONSTRAINED_SCALE = 10      # plain `numeric` becomes decimal(38,10)
+
+
 def sql_type(c: Column) -> str:
     base = TYPE_MAP.get(c.pg_type)
     if base is None:
@@ -1232,10 +1282,14 @@ def sql_type(c: Column) -> str:
             return "nvarchar(max)"
         return base.format(n=n)
     if "{p}" in base:
-        if c.precision is None or c.scale is None:
-            raise ValueError(f"{c.name}: unconstrained numeric requires an explicit precision and scale")
-        precision, scale = c.precision or 38, c.scale or 0
-        if precision > 38 or scale < 0 or scale > precision:
+        if c.precision is None:
+            # ponytail: one fixed scale for every unconstrained numeric; preflight
+            # stops if the data needs more. Size it per column from the data if that bites.
+            return base.format(p=38, s=UNCONSTRAINED_SCALE)
+        precision, scale = c.precision, c.scale or 0
+        if precision > 38 and 0 <= scale <= 38:
+            precision = 38          # SQL Server's max; preflight checks the values fit
+        if scale < 0 or scale > precision:
             raise ValueError(f"{c.name}: decimal({precision},{scale}) requires an explicit SQL Server mapping")
         return base.format(p=precision, s=scale)
     return base

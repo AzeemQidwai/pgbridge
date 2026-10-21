@@ -70,6 +70,37 @@ class TestTypeMapping(unittest.TestCase):
         self.assertEqual(sql_type(Column("state", "user_status", False, None, None)), "nvarchar(64)")
         self.assertEqual(sql_type(Column("delivery_type", "fulfillment_enum", False, None, None)), "nvarchar(64)")
 
+    def test_wide_decimal_narrowed_when_values_fit(self):
+        from unittest import mock
+        from pgbridge.engine import Connections, MsConfig, Options, PgConfig, Preflight, Table
+        amount = Column(name="amount", pg_type="numeric", nullable=True, is_pk=False,
+                        precision=50, scale=2)
+        self.assertEqual(sql_type(amount), "decimal(38,2)")
+        table = Table(name="creditcard", target_exists=False, columns=[amount])
+        pf = Preflight(Connections(PgConfig(dbname="s"), MsConfig(database="d")),
+                       [table], Options(mode="both"))
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal("12345.67"), 2)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "note")
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal(10) ** 36, 0)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "stop")
+
+    def test_unconstrained_numeric_bounded_when_values_fit(self):
+        from unittest import mock
+        from pgbridge.engine import Connections, MsConfig, Options, PgConfig, Preflight, Table
+        rate = Column(name="rate", pg_type="numeric", nullable=True, is_pk=False)
+        self.assertEqual(sql_type(rate), "decimal(38,10)")
+        table = Table(name="fx", target_exists=False, columns=[rate])
+        pf = Preflight(Connections(PgConfig(dbname="s"), MsConfig(database="d")),
+                       [table], Options(mode="both"))
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal("1.2345"), 4)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "note")
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal(10) ** 28, 0)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "stop")
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal("0.1"), 12)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "stop")    # would round
+        with mock.patch("pgbridge.engine.fetch_one", return_value=(None, None)):
+            self.assertEqual(pf._wide_decimal(table, None)[0].level, "note")    # empty table
+
 
 class TestCheckpointIsolation(unittest.TestCase):
     def test_checkpoint_isolation_and_fallback(self):
