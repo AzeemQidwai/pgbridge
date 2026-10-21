@@ -84,6 +84,28 @@ class TestTypeMapping(unittest.TestCase):
         with mock.patch("pgbridge.engine.fetch_one", return_value=(decimal.Decimal(10) ** 36, 0)):
             self.assertEqual(pf._wide_decimal(table, None)[0].level, "stop")
 
+    def test_json_write_survives_transient_access_denied(self):
+        import os
+        import tempfile
+        from unittest import mock
+        from pgbridge.cutover import atomic_write
+        real = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) < 3:
+                raise PermissionError(13, "Access is denied")   # WinError 5
+            real(src, dst)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "checkpoint.json")
+            with mock.patch("pgbridge.cutover.os.replace", flaky):
+                atomic_write(path, "{}")
+            self.assertEqual(open(path).read(), "{}")
+            self.assertEqual(os.listdir(d), ["checkpoint.json"])  # no temp left behind
+            self.assertEqual(len(calls), 3)
+
     def test_unconstrained_numeric_bounded_when_values_fit(self):
         from unittest import mock
         from pgbridge.engine import Connections, MsConfig, Options, PgConfig, Preflight, Table

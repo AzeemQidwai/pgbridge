@@ -23,6 +23,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable, Iterable
 
+from .cutover import atomic_write
+
 UTC = datetime.timezone.utc
 
 # Tables Django owns on the target side and must not receive source rows.
@@ -1462,16 +1464,12 @@ class Transport:
         if self.options.dry_run:
             return
         with self._lock:
-            tmp = self.checkpoint_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"updated": datetime.datetime.now().isoformat(),
-                           "pair": self.pair, "mode": self.options.mode,
-                           "context": self.resume_context,
-                           "errors": list(self.errors),
-                           "tables": self.results}, fh, indent=2, default=str)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.checkpoint_path)
+            atomic_write(self.checkpoint_path, json.dumps(
+                {"updated": datetime.datetime.now().isoformat(),
+                 "pair": self.pair, "mode": self.options.mode,
+                 "context": self.resume_context,
+                 "errors": list(self.errors),
+                 "tables": self.results}, indent=2, default=str))
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> threading.Thread:
@@ -2274,12 +2272,7 @@ class JobStore:
         os.makedirs(self.output_dir, exist_ok=True)
         data = self._read()
         data[job.id] = asdict(job)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, default=str)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, self.path)
+        atomic_write(self.path, json.dumps(data, indent=2, default=str))
 
     def list(self) -> list[dict]:
         return sorted(self._read().values(),
@@ -2292,10 +2285,7 @@ class JobStore:
         data = self._read()
         if data.pop(job_id, None) is None:
             return
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, default=str)
-        os.replace(tmp, self.path)
+        atomic_write(self.path, json.dumps(data, indent=2, default=str))
 
 
 def job_text_report(job: dict) -> str:

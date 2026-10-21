@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import stat
 
 # The keys written to .env, in the order they appear in the file.
@@ -38,7 +39,16 @@ def atomic_write(path: str, text: str, mode: int = 0o600) -> None:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(tmp, path)
+        # Windows denies the replace while anything (antivirus, indexer, a
+        # reader of the old file) holds the target open; that clears in moments.
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
